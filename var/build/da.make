@@ -431,6 +431,7 @@ da_radiance.o :
 	  $(FC) -c $(FCFLAGS) $(PROMOTION) $(CRTM_SRC) $(RTTOV_SRC) $(HDF5_INC) -I$(NETCDF)/include $*.f ; \
         fi
 
+da_radar.o \
 da_radiance1.o \
 module_radiance.o \
 da_setup_structures.o :

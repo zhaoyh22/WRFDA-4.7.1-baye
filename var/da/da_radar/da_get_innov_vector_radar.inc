@@ -43,6 +43,11 @@ subroutine da_get_innov_vector_radar (it, grid, ob, iv)
    real, allocatable :: model_qci(:,:)
    real, allocatable :: model_qsn(:,:)
    real, allocatable :: model_qgr(:,:)
+   real, allocatable :: radar_bayes_rf(:,:,:)
+   real, allocatable :: radar_bayes_rf_g(:,:,:)
+   real, allocatable :: radar_bayes_rh_g(:,:,:)
+   real, allocatable :: scr_assimilated(:,:,:)
+   logical, allocatable :: scr_obs_echo(:,:,:)
 
    real    :: v_h(kms:kme)      ! Model value h at ob hor. location.
 
@@ -53,6 +58,10 @@ subroutine da_get_innov_vector_radar (it, grid, ob, iv)
    real    :: alog_10, czrn, czds, czws, czgr, zrn, zds, zws, zgr, rze
    real    :: ob_radar_rf, bg_rze, bg_rf
    real    :: cwr, cws ! weighting coefficient for mixing ratio
+   real    :: bayes_rh, bg_rh, qgr_bayes
+   real    :: rqv_bayes_error
+   integer :: bayes_kk, bayes_size
+   logical :: bayes_ok, rqv_height_ok
 
    ! variables for calculating cloud base
    real, allocatable :: model_lcl(:)           !model LCL at ob locations
@@ -61,7 +70,9 @@ subroutine da_get_innov_vector_radar (it, grid, ob, iv)
    ! for opt=2
    real              :: zlcl(ims:ime,jms:jme)
 
-   logical           :: echo_non_precip, echo_rf_good
+   logical           :: echo_non_precip, echo_rf_good, echo_rf_bayes
+   logical           :: scr_candidate_ok
+   logical           :: scr_diag_on
 
    !--------------------------------------------------------
    !  for background-dependent hydrmeteor retrieval scheme
@@ -123,6 +134,20 @@ subroutine da_get_innov_vector_radar (it, grid, ob, iv)
    if (trace_use) call da_trace_entry("da_get_innov_vector_radar")
 
    irv = 0; irvf = 0; irf = 0; irff = 0
+   scr_diag_on = use_radar_rqv .and. radar_rqv_bayes_opt > 0 .and. &
+                 radar_rqv_bayes_scr_diag > 0 .and. it == 1
+
+   if (rootproc .and. radar_rqv_bayes_scr_diag > 0 .and. it == 1) then
+      if (scr_diag_on) then
+         write(unit=stdout,fmt='(A)') ' SCR diagnostic is enabled for radar rqv Bayesian adjustment'
+      else
+         write(unit=stdout,fmt='(A)') ' SCR diagnostic requested but skipped before minimization'
+         if (.not. use_radar_rqv) write(unit=stdout,fmt='(A)') &
+            ' SCR diagnostic skip reason: use_radar_rqv is false'
+         if (radar_rqv_bayes_opt <= 0) write(unit=stdout,fmt='(A)') &
+            ' SCR diagnostic skip reason: radar_rqv_bayes_opt <= 0'
+      end if
+   end if
 
 
    ! No point in going through and allocating all these variables if we're just going to quit anyway
@@ -158,7 +183,16 @@ subroutine da_get_innov_vector_radar (it, grid, ob, iv)
       allocate (model_lcl(iv%info(radar)%n1:iv%info(radar)%n2))
       allocate (model_qs_ice(iv%info(radar)%max_lev,iv%info(radar)%n1:iv%info(radar)%n2))
       model_qs_ice(:,:) = 0. !initialize
-   end if
+      if ( radar_rqv_bayes_opt > 0 ) then
+	         allocate (radar_bayes_rf(ims:ime,jms:jme,kms:kme))
+	         allocate (radar_bayes_rf_g(ids:ide,jds:jde,kds:kde))
+	         allocate (radar_bayes_rh_g(ids:ide,jds:jde,kds:kde))
+	         allocate (scr_obs_echo(ims:ime,jms:jme,kms:kme))
+	      end if
+	      if ( scr_diag_on ) then
+	         allocate (scr_assimilated(ims:ime,jms:jme,kms:kme))
+	      end if
+	   end if
 
    model_p(:,:)    = 0.
    model_u(:,:)    = 0.
@@ -179,6 +213,11 @@ subroutine da_get_innov_vector_radar (it, grid, ob, iv)
    model_qcl(:,:)  = 0.
    model_qsn(:,:)  = 0.
    model_qgr(:,:)  = 0.
+   if ( allocated(radar_bayes_rf) ) radar_bayes_rf(:,:,:) = missing_r
+   if ( allocated(radar_bayes_rf_g) ) radar_bayes_rf_g(:,:,:) = missing_r
+   if ( allocated(radar_bayes_rh_g) ) radar_bayes_rh_g(:,:,:) = missing_r
+   if ( allocated(scr_assimilated) ) scr_assimilated(:,:,:) = 0.0
+   if ( allocated(scr_obs_echo) ) scr_obs_echo(:,:,:) = .false.
 
    if ( it > 1 ) then
      do n=iv%info(radar)%n1,iv%info(radar)%n2
@@ -259,6 +298,52 @@ END IF
          end do
       end do
    end if ! lcl for use_radar_rqv
+
+   if ( use_radar_rqv .and. radar_rqv_bayes_opt > 0 ) then
+      do kk = kts, kte
+         do jj = jts, jte
+            do ii = its, ite
+               qgr_bayes = 0.0
+               if ( associated(grid%xb%qgr) ) qgr_bayes = grid%xb%qgr(ii,jj,kk)
+               call da_radar_rf(grid%xb%qrn(ii,jj,kk), grid%xb%qsn(ii,jj,kk), qgr_bayes, &
+                                grid%xb%t(ii,jj,kk)-273.15, grid%xb%rho(ii,jj,kk), bg_rze)
+               radar_bayes_rf(ii,jj,kk) = 10.0*log10(bg_rze)
+            end do
+         end do
+      end do
+
+      bayes_size = (ide-ids+1) * (jde-jds+1) * (kde-kds+1)
+      call da_patch_to_global(grid, radar_bayes_rf, radar_bayes_rf_g, mkz)
+      call da_patch_to_global(grid, grid%xb%rh, radar_bayes_rh_g, mkz)
+      call wrf_dm_bcast_real(radar_bayes_rf_g, bayes_size)
+      call wrf_dm_bcast_real(radar_bayes_rh_g, bayes_size)
+
+      if ( allocated(scr_obs_echo) ) then
+         do n=iv%info(radar)%n1,iv%info(radar)%n2
+            if (iv%info(radar)%levels(n) < 1) cycle
+
+            i = iv%info(radar)%i(1,n)
+            j = iv%info(radar)%j(1,n)
+
+            do k=1,iv%info(radar)%levels(n)
+               if (iv%radar(n)%height_qc(k) == below_model_surface .or. &
+                   iv%radar(n)%height_qc(k) == above_model_lid) cycle
+
+               echo_rf_good = (abs(ob % radar(n) % rf(k) - missing_r) > 1.0) &
+                              .and. (iv % radar(n) % rf(k) % qc >= obs_qc_pointer)
+
+               if ( echo_rf_good .and. ob % radar(n) % rf(k) > radar_rqv_bayes_noise ) then
+                  bayes_kk = nint(iv%info(radar)%zk(k,n))
+                  bayes_kk = max(kds, min(kds+mkz-1, bayes_kk))
+                  if (i >= ims .and. i <= ime .and. j >= jms .and. j <= jme .and. &
+                      bayes_kk >= kms .and. bayes_kk <= kme) then
+                     scr_obs_echo(i,j,bayes_kk) = .true.
+                  end if
+               end if
+            end do
+         end do
+      end if
+   end if
 
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
    ! background-dependent hydrometer retrieval scheme !
@@ -472,6 +557,7 @@ END IF
          ! initialize
          echo_non_precip = .false.
          echo_rf_good    = .false.
+         echo_rf_bayes   = .false.
 
          if (iv % radar(n) % height_qc(k) /= below_model_surface .and.  &
              iv % radar(n) % height_qc(k) /= above_model_lid) then
@@ -485,6 +571,12 @@ END IF
             ! this includes the echo_non_precip case
             echo_rf_good = (abs(ob % radar(n) % rf(k) - missing_r) > 1.0) &
                            .and. (iv % radar(n) % rf(k) % qc >= obs_qc_pointer)
+
+	            if ( use_radar_rqv .and. radar_rqv_bayes_opt > 0 ) then
+	               echo_rf_bayes = echo_rf_good .or. echo_non_precip .or. &
+	                               abs(ob % radar(n) % rf(k) - missing_r) <= 1.0 .or. &
+	                               ob % radar(n) % rf(k) <= radar_rqv_bayes_noise
+	            end if
 
             if (use_radar_rv) then
                !set qc to missing_data for rv of -999.99 (radar_non_precip_rf)
@@ -535,11 +627,13 @@ END IF
 
             ! Calculate background/model reflectivity
             if (use_radar_rhv .or. use_radar_rqv) then
-               if ( echo_rf_good ) then
+               if ( echo_rf_good .or. echo_rf_bayes ) then
                   call da_radar_rf (model_qrn(k,n),model_qsn(k,n),model_qgr(k,n),model_tc(k,n),model_rho(k,n),bg_rze)
                   bg_rf = 10.0*log10(bg_rze)  ! Z to dBZ
-                  iv % radar(n) % zmm(k) % inv = bg_rf
-                  iv % radar(n) % rf(k) % inv = ob % radar(n) % rf(k) - bg_rf
+                  if ( echo_rf_good ) then
+                     iv % radar(n) % zmm(k) % inv = bg_rf
+                     iv % radar(n) % rf(k) % inv = ob % radar(n) % rf(k) - bg_rf
+                  end if
                end if
             end if
 
@@ -716,13 +810,62 @@ END IF
                   iv % radar(n) % rqv(k) % error = amax1(0.0005,0.1*iv % radar(n) % rqvo(k))
                end if
 
-               if ( echo_rf_good ) then
+               if ( echo_rf_good .or. echo_rf_bayes ) then
 
                   ! initialize as not-assimilating rqv
                   iv % radar(n) % rqv(k) % qc = -5
+                  rqv_height_ok = iv%radar(n)%height(k) >= model_lcl(n)
+                  if ( radar_rqv_h_lbound >= 0.0 .and. radar_rqv_h_ubound >= 0.0 ) then
+                     if ( iv%radar(n)%height(k) < radar_rqv_h_lbound .or. &
+                          iv%radar(n)%height(k) > radar_rqv_h_ubound ) then
+                        rqv_height_ok = .false.
+                     end if
+                  end if
+                  bg_rh = 100.0*model_qv(k,n)/amax1(model_qs(k,n),1.0e-12)
+                  bg_rh = amin1(100.0, amax1(0.0, bg_rh))
+	                  bayes_kk = nint(iv%info(radar)%zk(k,n))
+	                  bayes_kk = max(kds, min(kds+mkz-1, bayes_kk))
+                     scr_candidate_ok = .true.
+                     if ( allocated(scr_obs_echo) ) then
+                        if (i >= ims .and. i <= ime .and. j >= jms .and. j <= jme .and. &
+                            bayes_kk >= kms .and. bayes_kk <= kme) then
+                           scr_candidate_ok = .not. scr_obs_echo(i,j,bayes_kk)
+                        end if
+                     end if
 
-                  if ( echo_non_precip ) then ! ob is non-precip
-                     if ( radar_non_precip_opt > 0 ) then ! assimilate non_precip echo
+	                  if ( echo_non_precip ) then ! ob is non-precip
+                     if ( radar_rqv_bayes_opt > 0 .and. bg_rf >= radar_rqv_bayes_bg_thresh .and. &
+                          rqv_height_ok .and. scr_candidate_ok ) then
+                        call da_radar_rqv_bayes(2, ob%radar(n)%rf(k), bg_rf, bg_rh, &
+                                                iv%info(radar)%i(1,n), iv%info(radar)%j(1,n), bayes_kk, &
+                                                radar_bayes_rf_g, radar_bayes_rh_g, bayes_rh, bayes_ok)
+                        if ( bayes_ok ) then
+                           iv % radar(n) % rqv(k) % qc = 0
+	                           iv % radar(n) % rqvo(k) = 0.01*bayes_rh*model_qs(k,n)
+	                           iv % radar(n) % rqv(k) % inv = iv % radar(n) % rqvo(k) - model_qv(k,n)
+	                           iv % radar(n) % rqv(k) % inv = amin1(0.0,iv % radar(n) % rqv(k) % inv )
+                              if ( radar_rqv_bayes_err_opt == 1 ) then
+                                 rqv_bayes_error = amax1(0.001,0.20*iv % radar(n) % rqvo(k))
+                              else if ( radar_rqv_bayes_err_opt == 2 ) then
+                                 rqv_bayes_error = amax1(radar_rqv_bayes_err_min, &
+                                    radar_rqv_bayes_err_factor*model_qs(k,n))
+                              else
+                                 write(unit=message(1),fmt='(A)') &
+                                    "radar_rqv_bayes_err_opt should be 1 or 2"
+                                 call da_error(__FILE__,__LINE__,message(1:1))
+                              end if
+                              iv % radar(n) % rqv(k) % error = rqv_bayes_error
+	                           if ( scr_diag_on ) then
+	                              if (i >= ims .and. i <= ime .and. j >= jms .and. j <= jme .and. &
+	                                  bayes_kk >= kms .and. bayes_kk <= kme) then
+	                                 scr_assimilated(i,j,bayes_kk) = 1.0
+	                              end if
+	                           end if
+	                        end if
+	                     end if
+
+                     if ( iv % radar(n) % rqv(k) % qc < obs_qc_pointer .and. &
+                          radar_non_precip_opt > 0 ) then ! assimilate non_precip echo
 
                         if ( bg_rf >= 20.0 .and. iv%radar(n)%height(k) > model_lcl(n) ) then
                            iv % radar(n) % rqv(k) % qc = 0
@@ -744,8 +887,67 @@ END IF
                         end if
                      end if
 
+                  else if ( radar_rqv_bayes_opt > 0 .and. &
+                            (abs(ob % radar(n) % rf(k) - missing_r) <= 1.0 .or. &
+                             ob % radar(n) % rf(k) <= radar_rqv_bayes_noise) .and. &
+                            bg_rf >= radar_rqv_bayes_bg_thresh .and. rqv_height_ok .and. &
+                            scr_candidate_ok ) then
+                     call da_radar_rqv_bayes(2, ob%radar(n)%rf(k), bg_rf, bg_rh, &
+                                             iv%info(radar)%i(1,n), iv%info(radar)%j(1,n), bayes_kk, &
+                                             radar_bayes_rf_g, radar_bayes_rh_g, bayes_rh, bayes_ok)
+                     if ( bayes_ok ) then
+                        iv % radar(n) % rqv(k) % qc = 0
+	                        iv % radar(n) % rqvo(k) = 0.01*bayes_rh*model_qs(k,n)
+	                        iv % radar(n) % rqv(k) % inv = iv % radar(n) % rqvo(k) - model_qv(k,n)
+	                        iv % radar(n) % rqv(k) % inv = amin1(0.0,iv % radar(n) % rqv(k) % inv )
+                           if ( radar_rqv_bayes_err_opt == 1 ) then
+                              rqv_bayes_error = amax1(0.001,0.20*iv % radar(n) % rqvo(k))
+                           else if ( radar_rqv_bayes_err_opt == 2 ) then
+                              rqv_bayes_error = amax1(radar_rqv_bayes_err_min, &
+                                 radar_rqv_bayes_err_factor*model_qs(k,n))
+                           else
+                              write(unit=message(1),fmt='(A)') &
+                                 "radar_rqv_bayes_err_opt should be 1 or 2"
+                              call da_error(__FILE__,__LINE__,message(1:1))
+                           end if
+                           iv % radar(n) % rqv(k) % error = rqv_bayes_error
+	                        if ( scr_diag_on ) then
+	                           if (i >= ims .and. i <= ime .and. j >= jms .and. j <= jme .and. &
+	                               bayes_kk >= kms .and. bayes_kk <= kme) then
+	                              scr_assimilated(i,j,bayes_kk) = 1.0
+	                           end if
+	                        end if
+	                     end if
+
                   else  ! ob is precip
-                     if ( ob % radar(n) % rf(k) >= radar_saturated_rf  .and. iv%radar(n)%height(k) >= model_lcl(n) )then
+                     if ( radar_rqv_bayes_opt > 0 .and. echo_rf_good .and. &
+                          ob % radar(n) % rf(k) > radar_rqv_bayes_noise .and. &
+                          ob % radar(n) % rf(k) < radar_rqv_bayes_obs_thresh .and. &
+                          bg_rf > radar_rqv_bayes_noise .and. rqv_height_ok ) then
+                        call da_radar_rqv_bayes(1, ob%radar(n)%rf(k), bg_rf, bg_rh, &
+                                                iv%info(radar)%i(1,n), iv%info(radar)%j(1,n), bayes_kk, &
+                                                radar_bayes_rf_g, radar_bayes_rh_g, bayes_rh, bayes_ok)
+                        if ( bayes_ok ) then
+                           iv % radar(n) % rqv(k) % qc = 0
+                           iv % radar(n) % rqvo(k) = 0.01*bayes_rh*model_qs(k,n)
+                           iv % radar(n) % rqv(k) % inv = iv % radar(n) % rqvo(k) - model_qv(k,n)
+                           if ( radar_rqv_bayes_err_opt == 1 ) then
+                              rqv_bayes_error = amax1(0.001,0.20*iv % radar(n) % rqvo(k))
+                           else if ( radar_rqv_bayes_err_opt == 2 ) then
+                              rqv_bayes_error = amax1(radar_rqv_bayes_err_min, &
+                                 radar_rqv_bayes_err_factor*model_qs(k,n))
+                           else
+                              write(unit=message(1),fmt='(A)') &
+                                 "radar_rqv_bayes_err_opt should be 1 or 2"
+                              call da_error(__FILE__,__LINE__,message(1:1))
+                           end if
+                           iv % radar(n) % rqv(k) % error = rqv_bayes_error
+                        end if
+                     end if
+
+                     if ( iv % radar(n) % rqv(k) % qc < obs_qc_pointer .and. &
+                          ob % radar(n) % rf(k) >= radar_saturated_rf  .and. &
+                          iv%radar(n)%height(k) >= model_lcl(n) )then
                         iv % radar(n) % rqv(k) % qc = 0
 
                         if ( radar_rqv_h_lbound >= 0.0 .and. radar_rqv_h_ubound >= 0.0 ) then
@@ -758,7 +960,8 @@ END IF
                         end if
                      end if
 
-                     if (iv % radar(n) % rqv(k) % qc >= obs_qc_pointer) then
+                     if (iv % radar(n) % rqv(k) % qc >= obs_qc_pointer .and. &
+                         ob % radar(n) % rf(k) >= radar_saturated_rf) then
                         ! reduce rqvo for certain rf ranges
                         if ( radar_rqv_thresh1 >= 0.0 ) then
                            if ( ob % radar(n) % rf(k) >= radar_saturated_rf .and. &
@@ -800,7 +1003,7 @@ END IF
       call da_check_max_iv_radar(iv, it, irv, irf, irvf, irff)
    end if
 
-   if (rootproc .and. check_max_iv_print) then
+	   if (rootproc .and. check_max_iv_print) then
       write(unit = check_max_iv_unit, fmt ='(/,A,i5,A)')   &
          'For outer iteration ', it, ', Total Rejections for radar follows:'
 
@@ -813,9 +1016,14 @@ END IF
          write( unit = check_max_iv_unit, fmt = '(/,2(A,I6))') &
             'Number of failed rf observations:     ',irff, ' on ',irf
       end if
-   end if
+	   end if
 
-   deallocate (model_p)
+	   if ( scr_diag_on ) then
+	      call da_write_radar_rqv_scr_diag(it, grid, ob, iv, radar_bayes_rf, &
+	                                       scr_obs_echo, scr_assimilated)
+	   end if
+
+	   deallocate (model_p)
    deallocate (model_u)
    deallocate (model_v)
    deallocate (model_w)
@@ -848,11 +1056,14 @@ END IF
 
    if ( use_radar_rqv ) then
       deallocate (model_lcl)
-      deallocate (model_qs_ice)
-   end if
+	      deallocate (model_qs_ice)
+	      if ( allocated(radar_bayes_rf) ) deallocate (radar_bayes_rf)
+	      if ( allocated(radar_bayes_rf_g) ) deallocate (radar_bayes_rf_g)
+	      if ( allocated(radar_bayes_rh_g) ) deallocate (radar_bayes_rh_g)
+	      if ( allocated(scr_assimilated) ) deallocate (scr_assimilated)
+	      if ( allocated(scr_obs_echo) ) deallocate (scr_obs_echo)
+	   end if
 
    if (trace_use) call da_trace_exit("da_get_innov_vector_radar")
 
 end subroutine da_get_innov_vector_radar
-
-

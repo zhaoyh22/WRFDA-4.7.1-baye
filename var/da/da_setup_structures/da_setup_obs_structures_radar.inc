@@ -85,17 +85,28 @@ subroutine da_setup_obs_structures_radar( grid, ob, iv )
          iv%time = n
          filename = ' '  
 
-         ! read radar observation file
-         write(filename(1:10), fmt='(a, i2.2, a)') 'ob', n,'.radar'
-         call da_read_obs_radar(iv, filename, grid)
+	         ! read radar observation file
+	         write(filename(1:10), fmt='(a, i2.2, a)') 'ob', n,'.radar'
+	         call da_read_obs_radar(iv, filename, grid)
 
-      end do
-   else
-      iv%time = 1
+	      end do
+	      if (use_radar_rqv .and. radar_rqv_bayes_opt > 0 .and. &
+	          radar_rqv_bayes_pseudo_opt > 0) then
+	         iv%time = num_fgat_time
+	         call da_setup_radar_rqv_bayes_pseudo(grid, iv, &
+	            iv%info(radar)%plocal(iv%time-1)+1, iv%info(radar)%plocal(iv%time))
+	      end if
+	   else
+	      iv%time = 1
 
-      ! read radar observation file
-      call da_read_obs_radar(iv, 'ob.radar', grid)
-   end if
+	      ! read radar observation file
+	      call da_read_obs_radar(iv, 'ob.radar', grid)
+	      if (use_radar_rqv .and. radar_rqv_bayes_opt > 0 .and. &
+	          radar_rqv_bayes_pseudo_opt > 0) then
+	         call da_setup_radar_rqv_bayes_pseudo(grid, iv, &
+	            iv%info(radar)%plocal(iv%time-1)+1, iv%info(radar)%plocal(iv%time))
+	      end if
+	   end if
 
 
    ! Calculate DT for RF DA
@@ -135,4 +146,3 @@ subroutine da_setup_obs_structures_radar( grid, ob, iv )
 
    if (trace_use) call da_trace_exit("da_setup_obs_structures_radar")
 end subroutine da_setup_obs_structures_radar
-

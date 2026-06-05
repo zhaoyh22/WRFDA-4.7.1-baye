@@ -1,7 +1,7 @@
 module da_radar
 
    use module_domain, only : domain
-   use module_dm, only : wrf_dm_sum_real
+   use module_dm, only : wrf_dm_sum_real, wrf_dm_sum_integer, wrf_dm_max_int
    use da_control, only : obs_qc_pointer,max_ob_levels,missing_r, &
       v_interp_p, v_interp_h, check_max_iv_print, trace_use, &
       missing, max_error_uv, max_error_t, rootproc, &
@@ -14,13 +14,18 @@ module da_radar
       fg_format,fg_format_wrf_arw_regional,fg_format_wrf_nmm_regional,fg_format_wrf_arw_global,&
       fg_format_kma_global,max_error_rv,max_error_rf, &
       far_below_model_surface,kms,kme,kts,kte, trace_use_dull,filename_len,&
-      myproc, analysis_date, num_procs , ierr, comm, es_beta, es_gamma, a_ew
+      myproc, analysis_date, num_procs , ierr, comm, stdout, es_beta, es_gamma, a_ew
    use da_control, only : its, ite, jts, jte, ids, ide, jds, jde, ims, ime, jms, jme, ips, ipe, jps, jpe, kds, kde
    use da_control, only : cloudbase_calc_opt, &
       radar_non_precip_rf, radar_non_precip_opt, radar_rqv_thresh1, radar_rqv_thresh2, &
       radar_rqv_rh1, radar_rqv_rh2, radar_non_precip_rh_w, radar_non_precip_rh_i, &
       radar_rqv_h_lbound, radar_rqv_h_ubound, radar_saturated_rf, cloud_cv_options, &
-      radar_rhv_err_opt, radar_rhv_rrn_err, radar_rhv_rsn_err, radar_rhv_rgr_err
+      radar_rhv_err_opt, radar_rhv_rrn_err, radar_rhv_rsn_err, radar_rhv_rgr_err, &
+      radar_rqv_bayes_opt, radar_rqv_bayes_radius, radar_rqv_bayes_clear_radius, &
+      radar_rqv_bayes_sigma, radar_rqv_bayes_bg_thresh, radar_rqv_bayes_obs_thresh, &
+      radar_rqv_bayes_noise, radar_rqv_bayes_min_pts, radar_rqv_bayes_rh_min, &
+      radar_rqv_bayes_err_opt, radar_rqv_bayes_err_min, radar_rqv_bayes_err_factor, &
+      radar_rqv_bayes_scr_diag
    use da_define_structures, only : maxmin_type, iv_type, y_type, jo_type, &
       bad_data_type, x_type, number_type, bad_data_type, &
       infa_type, field_type
@@ -32,6 +37,7 @@ module da_radar
    use da_tracing, only : da_trace_entry, da_trace_exit
    use da_reporting, only : da_error, da_warning, da_message, message
    use da_tools_serial, only : da_get_unit, da_free_unit
+   use da_wrf_interfaces, only : wrf_dm_bcast_real
 
    ! The "stats_radar_type" is ONLY used locally in da_radar:
 
@@ -73,6 +79,8 @@ contains
 #include "da_transform_xtoy_radar.inc"
 #include "da_transform_xtoy_radar_adj.inc"
 #include "da_check_max_iv_radar.inc"
+#include "da_radar_rqv_bayes.inc"
+#include "da_write_radar_rqv_scr_diag.inc"
 #include "da_get_innov_vector_radar.inc"
 #include "da_radial_velocity.inc"
 #include "da_radial_velocity_lin.inc"
@@ -107,4 +115,3 @@ contains
 #include "da_radzicevar_sigma_in_abc.inc"
 
 end module da_radar
-

@@ -12,7 +12,8 @@ module da_setup_structures
 #if (WRF_CHEM == 1)
       da_allocate_observations_chem_sfc, &
 #endif
-      multi_level_type,each_level_type, da_allocate_observations_rain
+      multi_level_type,each_level_type, da_allocate_observations_rain, &
+      field_type, radar_type
    use da_define_structures, only : da_allocate_obs_info, da_allocate_y, da_allocate_y_radar, &
       da_allocate_y_rain, da_allocate_y_lightning
    use da_wrf_interfaces, only : wrf_debug, &
@@ -75,7 +76,11 @@ module da_setup_structures
       interpolate_stats, be_eta, thin_rainobs, fgat_rain_flags, use_iasiobs, &
       use_seviriobs, jds_int, jde_int, anal_type_hybrid_dual_res, use_amsr2obs, nrange, use_4denvar, &
       use_goesimgobs, use_ahiobs, use_goesabiobs, use_gmiobs, obs_use, thin_conv_opt, no_thin, &
-      thin_superob_hv, thin_mesh_vert_conv, use_satwnd_bufr
+      thin_superob_hv, thin_mesh_vert_conv, use_satwnd_bufr, &
+      radar_rqv_bayes_opt, radar_rqv_bayes_bg_thresh, radar_rqv_bayes_clear_radius, &
+      radar_rqv_bayes_pseudo_opt, radar_rqv_bayes_pseudo_h_stride, &
+      radar_rqv_bayes_pseudo_v_stride, radar_rqv_bayes_pseudo_max, &
+      radar_rqv_h_lbound, radar_rqv_h_ubound
    use da_control, only: rden_bin, use_lsac
    use da_control, only: use_cv_w
    use da_control, only: pseudo_tpw, pseudo_ztd, pseudo_ref, pseudo_uvtpq, pseudo_elv, anal_type_qcobs
@@ -156,6 +161,7 @@ contains
 #include "da_setup_obs_structures_bufr.inc"
 #include "da_setup_obs_structures_madis.inc"
 #include "da_setup_obs_structures_rain.inc"
+#include "da_setup_radar_rqv_bayes_pseudo.inc"
 #include "da_setup_obs_structures_radar.inc"
 #include "da_setup_obs_structures_lightning.inc"
 #include "da_setup_pseudo_obs.inc"

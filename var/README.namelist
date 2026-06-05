@@ -595,6 +595,28 @@ Description of WRFDA namelist variables, defined in Registry/registry.var
   radar_rqv_rh2           = 85.0      ; RH (%) for (radar_rqv_thresh1 < rf < radar_rqv_thresh2)
   radar_rqv_h_lbound      = -999.0    ; height (m) lower bound for rqv
   radar_rqv_h_ubound      = -999.0    ; height (m) upper bound for rqv
+  radar_rqv_bayes_opt     = 0         ; 0: off
+                                      ; 1: Bayesian rqv for weak echo and clear/missing echo
+  radar_rqv_bayes_radius  = 20        ; horizontal radius (grid points) for weak-echo Bayesian rqv
+  radar_rqv_bayes_clear_radius = 33    ; horizontal radius (grid points) for clear/missing echo Bayesian rqv
+  radar_rqv_bayes_sigma   = 5.0       ; reflectivity sigma (dBZ) for weak-echo Bayesian rqv
+  radar_rqv_bayes_bg_thresh = 30.0    ; background reflectivity (dBZ) threshold for false convection
+  radar_rqv_bayes_obs_thresh = 25.0   ; observed reflectivity (dBZ) upper threshold for weak echo
+  radar_rqv_bayes_noise   = 0.0       ; reflectivity (dBZ) value for no/weak echo
+  radar_rqv_bayes_min_pts = 3         ; minimum environmental points for clear/missing echo Bayesian rqv
+  radar_rqv_bayes_rh_min  = 10.0      ; minimum RH (%) for clear/missing echo Bayesian rqv
+  radar_rqv_bayes_err_opt = 1         ; 1: same as original WRFDA rqv error
+                                      ;    max(0.001,0.20*rqvo)
+                                      ; 2: configurable qsat-based error
+                                      ;    max(radar_rqv_bayes_err_min,
+                                      ;        radar_rqv_bayes_err_factor*model_qs)
+  radar_rqv_bayes_err_min = 0.0005    ; minimum Bayesian rqv error (kg/kg)
+  radar_rqv_bayes_err_factor = 0.10   ; qsat-based Bayesian rqv error factor
+  radar_rqv_bayes_pseudo_opt = 0      ; 0: off, 1: create internal rqv-only pseudo radar obs
+  radar_rqv_bayes_pseudo_h_stride = 1 ; horizontal stride (grid points) for internal pseudo obs
+  radar_rqv_bayes_pseudo_v_stride = 1 ; vertical stride (model levels) for internal pseudo obs
+  radar_rqv_bayes_pseudo_max = 0      ; maximum internal pseudo obs per MPI task; 0: no limit
+  radar_rqv_bayes_scr_diag = 0        ; 0: off, 1: write SCR diagnostic NetCDF
   radar_rhv_err_opt       = 1         ;(default) 1: calculated (original), 2: from namelist
   radar_rhv_rrn_err       = 0.15      ;(default) obs error of retrieved qrain in g/kg
   radar_rhv_rsn_err       = 0.15      ;(default) obs error of retrieved qsnow in g/kg
