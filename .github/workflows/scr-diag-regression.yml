@@ -1,0 +1,25 @@
+name: SCR diagnostic regression
+on:
+  push:
+    paths:
+      - 'var/da/da_radar/**'
+      - 'var/da/da_minimisation/da_get_innov_vector.inc'
+      - 'var/test/radar_rqv_bayes/**'
+      - '.github/workflows/scr-diag-regression.yml'
+  pull_request:
+    paths:
+      - 'var/da/da_radar/**'
+      - 'var/da/da_minimisation/da_get_innov_vector.inc'
+      - 'var/test/radar_rqv_bayes/**'
+      - '.github/workflows/scr-diag-regression.yml'
+permissions:
+  contents: read
+jobs:
+  writer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test dependencies
+        run: sudo apt-get update && sudo apt-get install -y gfortran libnetcdff-dev python3-numpy python3-scipy
+      - name: Test production SCR NetCDF writer
+        run: /usr/bin/python3 -m unittest discover -s var/test/radar_rqv_bayes -v

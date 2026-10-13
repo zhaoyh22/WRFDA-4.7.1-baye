@@ -25,7 +25,7 @@ module da_radar
       radar_rqv_bayes_sigma, radar_rqv_bayes_bg_thresh, radar_rqv_bayes_obs_thresh, &
       radar_rqv_bayes_noise, radar_rqv_bayes_min_pts, radar_rqv_bayes_rh_min, &
       radar_rqv_bayes_err_opt, radar_rqv_bayes_err_min, radar_rqv_bayes_err_factor, &
-      radar_rqv_bayes_scr_diag
+      radar_rqv_bayes_scr_diag, num_fgat_time
    use da_define_structures, only : maxmin_type, iv_type, y_type, jo_type, &
       bad_data_type, x_type, number_type, bad_data_type, &
       infa_type, field_type

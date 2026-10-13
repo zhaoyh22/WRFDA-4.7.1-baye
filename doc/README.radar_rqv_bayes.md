@@ -148,8 +148,22 @@ Set:
 radar_rqv_bayes_scr_diag = 1
 ```
 
-WRFDA will write `scr_diag.nc` during outer iteration 1 before minimization.
-The file contains three byte masks:
+WRFDA writes diagnostics during outer iteration 1 before minimization, on the
+root process after gathering the masks. With `num_fgat_time = 1`, the legacy
+filename `scr_diag.nc` is retained. With `num_fgat_time > 1`, each diagnosed slot
+writes `scr_diag_t<time_index>.nc` (for example, `scr_diag_t1.nc`,
+`scr_diag_t2.nc`, and `scr_diag_t3.nc`). Slot 1 also has a suffix; no unsuffixed
+file is produced by a multi-slot run.
+
+`time_index` is the one-based FGAT slot (`iv%time`), not outer iteration or a
+calendar timestamp. The driver in `da_get_innov_vector.inc` visits slots from
+`num_fgat_time` down to 1 and selects observations using `plocal(time_index-1)`
+and `plocal(time_index)`. Every file retains the text global attributes
+`time_index` and `analysis_date`; `analysis_date` is the analysis date, not the
+individual slot's valid time. Slots without usable non-pseudo radar observations
+can be skipped. Internal pseudo observations still belong to the final slot.
+
+Each file contains three byte masks:
 
 | Variable | Meaning |
 | --- | --- |
@@ -195,7 +209,7 @@ The file contains three byte masks:
 - Use `radar_rqv_h_lbound` and `radar_rqv_h_ubound` to restrict the scheme to a
   vertical layer.
 - Keep `radar_rqv_bayes_pseudo_opt = 0` for first tests.  Turn it on only after
-  the direct radar observation path and `scr_diag.nc` masks look reasonable.
+  the direct radar observation path and the SCR diagnostic masks look reasonable.
 
 ## Build notes
 
@@ -208,3 +222,23 @@ for `da_radiance1.o`, `module_radiance.o`, and `da_setup_structures.o`.
 `var/obsproc/src/Makefile` adds a no-optimization compile rule for
 `module_err_afwa.o`.  This is a build-stability change and is not part of the
 Bayesian radar algorithm.
+
+## SCR regression checks
+
+Run `python3 -m unittest discover -s var/test/radar_rqv_bayes -v` with
+GNU Fortran, NetCDF Fortran (`nf-config`), NumPy and SciPy installed. The test
+compiles the production NetCDF writer in a minimal host module and reads the
+resulting files. It checks single-slot compatibility, reverse-order multi-slot
+writes, distinct contents for all three masks, the time-index attribute, and
+indices above fixed-width naming limits. It also checks the source wiring of
+the slot loop and module import. CI runs this isolated regression; it does not
+build or run the full WRFDA model.
+
+For operational validation, run a real FGAT case with radar data in at least two
+slots and SCR diagnostics enabled. Check the logs for each expected output,
+inspect each file's `time_index`, dimensions and three masks, and compare masks
+with the corresponding background and observations. Repeat in MPI mode to
+validate collective gathering and root-only output. This requires a configured
+WRFDA build and case data and is separate from the isolated writer test.
+Repeated runs in the same directory (or another write of the same slot) still
+replace the same filename via `nf_clobber`; use separate run directories.
