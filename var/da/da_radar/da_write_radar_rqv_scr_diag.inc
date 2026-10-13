@@ -195,7 +195,12 @@ subroutine da_write_radar_rqv_scr_diag_nc(time_index, scr_valid, &
    character(len=filename_len) :: filename
    character(len=160) :: attr
 
+   ! Preserve the legacy name only for single-slot runs. Even slot 1 needs
+   ! a suffix in FGAT: the driver visits slots in reverse order.
    filename = 'scr_diag.nc'
+   if (num_fgat_time > 1) then
+      write(filename,fmt='(A,I0,A)') 'scr_diag_t', time_index, '.nc'
+   end if
 
    nx = ide - ids + 1
    ny = jde - jds + 1
